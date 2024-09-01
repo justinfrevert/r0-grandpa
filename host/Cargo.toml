@@ -1,0 +1,35 @@
+[package]
+name = "host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+methods = { path = "../methods" }
+risc0-zkvm = { version = "1.0.5" }
+
+serde = "1.0"
+tokio = { version = "1.39.3", features = ["full"] }
+derive-where = "1.2.7"
+
+clap = { version = "4.4.18", features = ["env", "derive"] }
+subxt = "0.37.0"
+subxt-signer = "0.37.0"
+
+bip39 = { version = "2.0.0", default-features = false }
+env_logger = "0.11.5"
+thiserror = "1.0.60"
+derive-new = { version = "0.6.0" }
+hex = { default-features = false, version = "0.4.3" }
+
+sp-runtime = "39.0.0"
+
+serde_json = { default-features = false, version = '1.0.113' }
+sc-consensus-grandpa = "0.29.1"
+sp-consensus-grandpa = "21.0.0"
+sp-core = "34.0.0"
+parity-scale-codec = { version = "3.6.8" }
+finality-grandpa = "0.16.2"
+
+ed25519-dalek = { version =  "2.1.1",  default-features = true, features = [
+  "rand_core",
+] }
