@@ -22,12 +22,23 @@ async fn main() {
     let cli = Cli::parse();
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-    client::get_finality_proof(cli.rpc_url, cli.block_number).await;
+    let guest_proofs = client::get_finality_proof(cli.rpc_url, cli.block_number).await;
+
+    let encoded_guest_proofs: Vec<(
+        [u8; 32],
+        Vec<u8>,
+        Vec<u8>,
+    )> = guest_proofs.iter().map(|guest_proof| {
+        let encoded_verifying_key = guest_proof.0.to_bytes();
+        let encoded_signature = guest_proof.2.to_bytes();
+        (encoded_verifying_key, guest_proof.1.clone(), encoded_signature.to_vec())
+    }).collect();
 
     // For example:
-    let input: u32 = 15 * u32::pow(2, 27) + 1;
+    // let input: u32 = 15 * u32::pow(2, 27) + 1;
+
     let env = ExecutorEnv::builder()
-        .write(&input)
+        .write(&encoded_guest_proofs[0])
         .unwrap()
         .build()
         .unwrap();

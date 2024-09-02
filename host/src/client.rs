@@ -165,16 +165,22 @@ pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<Guest
 }
 
 // Proof values with dalek types to match the accelerated crypto operations in the guest
-pub struct GuestProof {
-	signature: ed25519_dalek::Signature,
-	message: Message,
-	authority: ed25519_dalek::VerifyingKey,
-}
+// pub struct GuestProof {
+// 	signature: ed25519_dalek::Signature,
+// 	message: Message,
+// 	authority: ed25519_dalek::VerifyingKey,
+// }
+
+// pub struct GuestProof(ed25519_dalek::Signature, Message, ed25519_dalek::VerifyingKey);
+pub struct GuestProof(
+	pub ed25519_dalek::VerifyingKey,
+	pub Message,
+	pub ed25519_dalek::Signature);
 
 impl GuestProof {
 	pub fn verify(&self) -> bool {
 		use ed25519_dalek::Verifier;
-		ed25519_dalek::VerifyingKey::verify(&self.authority, &self.message, &self.signature).is_ok()
+		ed25519_dalek::VerifyingKey::verify(&self.0, &self.1, &self.2).is_ok()
 	}
 }
 
@@ -182,10 +188,11 @@ impl From<OnchainProof> for GuestProof {
 	fn from(onchain_proof: OnchainProof) -> Self {
 		let dalek_signature = ed25519_dalek::Signature::from_bytes(&onchain_proof.signature.0);
 		let dalek_authority = ed25519_dalek::VerifyingKey::from_bytes(&onchain_proof.authority.0).unwrap();
-		GuestProof {
-			signature: dalek_signature,
-			message: onchain_proof.message,
-			authority: dalek_authority,
-		}
+		// GuestProof {
+		// 	signature: dalek_signature,
+		// 	message: onchain_proof.message,
+		// 	authority: dalek_authority,
+		// }
+		GuestProof(dalek_authority, onchain_proof.message, dalek_signature)
 	}
 }	
