@@ -34,11 +34,8 @@ async fn main() {
         (encoded_verifying_key, guest_proof.1.clone(), encoded_signature.to_vec())
     }).collect();
 
-    // For example:
-    // let input: u32 = 15 * u32::pow(2, 27) + 1;
-
     let env = ExecutorEnv::builder()
-        .write(&encoded_guest_proofs[0])
+        .write(&encoded_guest_proofs)
         .unwrap()
         .build()
         .unwrap();
