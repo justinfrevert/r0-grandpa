@@ -80,6 +80,7 @@ impl<T: Config> LegacyRpcMethods<T> {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct OnchainProof {
 	signature: Signature,
 	message: Message,
@@ -87,7 +88,7 @@ pub struct OnchainProof {
 }
 
 // Extract values from onchain proof
-pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<OnchainProof> {
+pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<GuestProof> {
     use subxt::ext::subxt_core::utils::H256;
 
     let rpc_client = RpcClient::from_url(&rpc_url).await.unwrap();
@@ -138,7 +139,7 @@ pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<Oncha
     let authority = alice.public();
     let round = justification.round;
 
-    let verification_data: Vec<OnchainProof> = justification
+    let verification_data: Vec<GuestProof> = justification
         .commit
         .precommits
         .iter()
@@ -150,14 +151,41 @@ pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<Oncha
 			let is_verified = Pair::verify(&signed_precommit.signature, &payload[..], &authority);
 			assert!(is_verified);
 
-			OnchainProof { signature, message: payload, authority }
+			let onchain_proof = OnchainProof { signature, message: payload, authority };
+
+			let guest_proof = GuestProof::from(onchain_proof.clone());
+			assert!(guest_proof.verify());
+
+			// onchain_proof
+			guest_proof
         })
         .collect();
 
     verification_data
 }
 
-
-pub fn get_guest_proof(onchain_proof: Vec<OnchainProof>) {
-
+// Proof values with dalek types to match the accelerated crypto operations in the guest
+pub struct GuestProof {
+	signature: ed25519_dalek::Signature,
+	message: Message,
+	authority: ed25519_dalek::VerifyingKey,
 }
+
+impl GuestProof {
+	pub fn verify(&self) -> bool {
+		use ed25519_dalek::Verifier;
+		ed25519_dalek::VerifyingKey::verify(&self.authority, &self.message, &self.signature).is_ok()
+	}
+}
+
+impl From<OnchainProof> for GuestProof {
+	fn from(onchain_proof: OnchainProof) -> Self {
+		let dalek_signature = ed25519_dalek::Signature::from_bytes(&onchain_proof.signature.0);
+		let dalek_authority = ed25519_dalek::VerifyingKey::from_bytes(&onchain_proof.authority.0).unwrap();
+		GuestProof {
+			signature: dalek_signature,
+			message: onchain_proof.message,
+			authority: dalek_authority,
+		}
+	}
+}	
