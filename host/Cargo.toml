@@ -33,3 +33,6 @@ finality-grandpa = "0.16.2"
 ed25519-dalek = { version =  "2.1.1",  default-features = true, features = [
   "rand_core",
 ] }
+
+[build-dependencies]
+protoc-bin-vendored = "3.0.0"
