@@ -1,14 +1,11 @@
-use sp_core::Pair as PairT;
-use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
-use subxt::config::substrate::SubstrateHeader;
+
+use sp_core::{sr25519};
+use sp_core::Pair as PairT;
+use subxt::config::substrate;
 use subxt::Config;
 use subxt::OnlineClient;
-use subxt_signer::sr25519::Keypair;
-
-use subxt::config::substrate::BlakeTwo256;
 
 use derive_where::derive_where;
 use sp_core::ed25519::{Pair, Public, Signature};
@@ -16,13 +13,11 @@ use subxt::backend::legacy::rpc_methods::{BlockNumber, NumberOrHex};
 use subxt::backend::rpc::RawValue;
 use subxt::backend::rpc::RpcClient;
 use subxt::SubstrateConfig;
-use tokio::sync::Mutex;
 
 use parity_scale_codec::{Decode, Encode};
 
 // Must replace with your node's metadata
-// #[subxt::subxt(runtime_metadata_path = "./example_metadata.scale")]
-#[subxt::subxt(runtime_metadata_path = "./DONOTUSE_metadata.scale")]
+#[subxt::subxt(runtime_metadata_path = "./example_metadata.scale")]
 mod substrate_node {}
 
 use substrate_node::runtime_types::sp_runtime::generic::header::Header;
@@ -78,6 +73,29 @@ impl<T: Config> LegacyRpcMethods<T> {
             .unwrap();
         finality_proof
     }
+
+    pub async fn chain_getFinalizedHead(&self) -> Box<RawValue> {
+        use subxt::rpc_params;
+        let params = rpc_params![];
+        let finalized_head = self
+            .client
+            .request_raw("chain_getFinalizedHead", params.build())
+            .await
+            .unwrap();
+        finalized_head
+    }
+
+	pub async fn chain_getBlock(&self, block_hash: Box<RawValue>) -> Box<RawValue> {
+        use subxt::rpc_params;
+        let params = rpc_params![block_hash];
+        let block = self
+            .client
+            .request_raw("chain_getBlock", params.build())
+            .await
+            .unwrap();
+        block
+    }
+
 }
 
 #[derive(Clone, Debug)]
@@ -90,7 +108,6 @@ pub struct OnchainProof {
 // Extract values from onchain proof
 pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<GuestProof> {
     use subxt::ext::subxt_core::utils::H256;
-
     let rpc_client = RpcClient::from_url(&rpc_url).await.unwrap();
     let rpc = LegacyRpcMethods::<SubstrateConfig>::new(rpc_client.clone());
     let api = OnlineClient::<SubstrateConfig>::from_rpc_client(rpc_client.clone())
@@ -104,10 +121,13 @@ pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<Guest
     let finality_proof_str = finality_proof.get();
     let trimmed = &finality_proof_str[3..finality_proof_str.len() - 1];
 
-    let hex_decoded = hex::decode(trimmed).unwrap();
+    // Ensure it's not an empty proof; indicates some finality misconfiguration
+    assert!(trimmed.len() != 0);
+
+    let hex_decoded_finality_proof = hex::decode(trimmed).unwrap();
 
     let finality_proof: FinalityProof<Header<u32>, H256> =
-        FinalityProof::decode(&mut &hex_decoded[..]).unwrap();
+        FinalityProof::decode(&mut &hex_decoded_finality_proof[..]).unwrap();
 
     let justification: GrandpaJustification<Header<u32>, H256, u32> =
         Decode::decode(&mut &finality_proof.justification[..]).unwrap();
@@ -115,6 +135,7 @@ pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<Guest
     let block_hash_query = substrate_node::storage()
         .system()
         .block_hash(block_number as u32);
+
     let block_hash = api
         .storage()
         .at_latest()
@@ -134,24 +155,40 @@ pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<Guest
         .await
         .unwrap();
 
-	// TODO: get authorities
-	let alice: Pair = Pair::from_legacy_string("//Alice", None);
-    let authority = alice.public();
+    let authorities_query = substrate_node::storage()
+        .grandpa()
+        .authorities();
+
+    let authorities: Vec<Public> = api
+        .storage()
+        .at(block_hash)
+        .fetch(&authorities_query)
+        .await
+        .unwrap()
+        .expect("Onchain authorities should always exist").0
+        .into_iter()
+        .map(|authority_with_weight| {
+            Public::from_raw(authority_with_weight.0.0)
+        })
+        .collect();
+
+
     let round = justification.round;
 
     let verification_data: Vec<GuestProof> = justification
         .commit
         .precommits
         .iter()
-        .map(|signed_precommit| {
+        .enumerate()
+        .map(|(i, signed_precommit)| {
             let msg = finality_grandpa::Message::Precommit(signed_precommit.precommit.clone());
             let payload = sp_consensus_grandpa::localized_payload(round, set_id.unwrap(), &msg);
             let signature = signed_precommit.signature.clone();
 			// TODO: Do verification optionally
-			let is_verified = Pair::verify(&signed_precommit.signature, &payload[..], &authority);
-			assert!(is_verified);
+			// let is_verified = Pair::verify(&signed_precommit.signature, &payload[..], &authority);
+			// assert!(is_verified);
 
-			let onchain_proof = OnchainProof { signature, message: payload, authority };
+			let onchain_proof = OnchainProof { signature, message: payload, authority: authorities[i] };
 
 			let guest_proof = GuestProof::from(onchain_proof.clone());
 			assert!(guest_proof.verify());
@@ -163,13 +200,6 @@ pub async fn get_finality_proof(rpc_url: String, block_number: u64) -> Vec<Guest
 
     verification_data
 }
-
-// Proof values with dalek types to match the accelerated crypto operations in the guest
-// pub struct GuestProof {
-// 	signature: ed25519_dalek::Signature,
-// 	message: Message,
-// 	authority: ed25519_dalek::VerifyingKey,
-// }
 
 // pub struct GuestProof(ed25519_dalek::Signature, Message, ed25519_dalek::VerifyingKey);
 pub struct GuestProof(
@@ -188,11 +218,6 @@ impl From<OnchainProof> for GuestProof {
 	fn from(onchain_proof: OnchainProof) -> Self {
 		let dalek_signature = ed25519_dalek::Signature::from_bytes(&onchain_proof.signature.0);
 		let dalek_authority = ed25519_dalek::VerifyingKey::from_bytes(&onchain_proof.authority.0).unwrap();
-		// GuestProof {
-		// 	signature: dalek_signature,
-		// 	message: onchain_proof.message,
-		// 	authority: dalek_authority,
-		// }
 		GuestProof(dalek_authority, onchain_proof.message, dalek_signature)
 	}
 }	
